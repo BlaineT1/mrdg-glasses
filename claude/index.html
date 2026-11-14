@@ -118,7 +118,8 @@
     main.hidden = true; picker.hidden = false;
     for (const [id, btn] of [['cloud', $('mCloud')], ['home', $('mHome')]]) {
       const s = $(id === 'cloud' ? 'sCloud' : 'sHome');
-      const connected = !!cfg(id).url;
+      const c = cfg(id);
+      const connected = id === 'home' ? !!c.key : !!c.url;
       const last = id === mode ? '  ·  last used' : '';
       s.textContent = (connected ? 'Connected' : 'Not set up yet (demo)') + last;
       s.className = 's' + (connected ? ' on' : '');
@@ -137,7 +138,7 @@
     setStatus('ready');
     $('hint').textContent = voiceOk
       ? 'Voice: say "Hey Meta, ask Claude ..." or select the box.'
-      : (cfg(id).url ? 'Select the box to ask.' : 'Demo mode (not set up yet). Select the box to ask.');
+      : ((id === 'home' ? cfg(id).key : cfg(id).url) ? 'Select the box to ask.' : 'Demo mode (not set up yet). Select the box to ask.');
     $('ask').focus();
   }
 
@@ -174,20 +175,68 @@
   function stopSpeaking() { try { speechSynthesis.cancel(); } catch (e) {} }
 
   // ---- Ask Claude
-  async function callBackend(question) {
-    const { url, key } = cfg(mode);
-    if (!url) {
-      await new Promise(r => setTimeout(r, 600));
-      return 'Demo mode: ' + MODES[mode].name + ' is not set up yet. You asked: "' + question + '".';
+  // Home Claude's tunnel address changes each time it starts. The PC publishes the current
+  // one (never the token) to a branch of the repo, and we look it up here.
+  const ADDR_SOURCES = [
+    'https://api.github.com/repos/BlaineT1/mrdg-glasses/contents/home.json?ref=home-address',
+    'https://raw.githubusercontent.com/BlaineT1/mrdg-glasses/home-address/home.json',
+  ];
+  // Returns the current address, '' if Home Claude was switched off, or null if it can't be looked up.
+  async function lookupHomeAddress() {
+    for (const src of ADDR_SOURCES) {
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 5000);
+        const r = await fetch(src + (src.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store', signal: ctl.signal });
+        clearTimeout(timer);
+        if (!r.ok) continue;
+        const d = await r.json();
+        const j = d.content ? JSON.parse(atob(d.content.replace(/\n/g, ''))) : d;
+        if (typeof j.url === 'string') return j.url;
+      } catch (e) { /* try the next source */ }
     }
+    return null;
+  }
+  const friendly = (msg) => { const e = new Error(msg); e.friendly = true; return e; };
+  const OFF_MSG = 'Home Claude is turned off. Start it on your PC, then try again.';
+
+  async function post(url, key, question) {
     const res = await fetch(url.replace(/\/$/, '') + '/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
       body: JSON.stringify({ question, history: history.slice(-6) }),
     });
+    if (res.status === 401) throw friendly(MODES[mode].name + ' rejected the saved token. Re-add the app with the latest address.');
     if (!res.ok) throw new Error(MODES[mode].name + ' returned ' + res.status);
     const data = await res.json();
     return data.answer || '(empty answer)';
+  }
+
+  async function callBackend(question) {
+    let { url, key } = cfg(mode);
+    const demo = async () => {
+      await new Promise(r => setTimeout(r, 600));
+      return 'Demo mode: ' + MODES[mode].name + ' is not set up yet. You asked: "' + question + '".';
+    };
+    if (mode === 'home') {
+      if (!key) return demo();
+      const found = await lookupHomeAddress();
+      if (found === '') throw friendly(OFF_MSG);
+      if (found) { url = found; store.set('mrdg_home_url', found); }
+      if (!url) throw friendly('Could not find Home Claude. Is it running on your PC?');
+      try {
+        return await post(url, key, question);
+      } catch (e) {
+        if (e instanceof TypeError) { // network failure: the address may have just changed
+          const again = await lookupHomeAddress();
+          if (again === '') throw friendly(OFF_MSG);
+          if (again && again !== url) { store.set('mrdg_home_url', again); return await post(again, key, question); }
+        }
+        throw e;
+      }
+    }
+    if (!url) return demo();
+    return post(url, key, question);
   }
 
   async function ask(question) {
@@ -207,8 +256,9 @@
       setStatus('done');
       speak(answer);
     } catch (e) {
-      answerText = 'Could not reach ' + MODES[mode].name + ': ' + e.message +
-        (mode === 'home' ? '  Is your PC on and the helper running?' : '');
+      answerText = e.friendly ? e.message
+        : 'Could not reach ' + MODES[mode].name + ': ' + e.message +
+          (mode === 'home' ? '  Is your PC on and Home Claude running?' : '');
       renderAnswer();
       setStatus('error');
     } finally {
