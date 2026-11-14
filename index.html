@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>MRDG</title>
+<meta name="mrbd-web-app-capable" content="yes">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<style>html,body{margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif}body{width:600px;height:600px;overflow:hidden;padding:28px}
+a{display:block;font-size:26px;color:#fff;background:#111;border:3px solid #333;border-radius:14px;padding:18px;margin:14px 0;text-decoration:none}
+a:focus{outline:none;border-color:#00d4ff;box-shadow:0 0 20px rgba(0,212,255,.4)}h1{color:#00d4ff;font-size:28px}</style></head>
+<body><h1>MRDG</h1><a href="hello/" data-focusable>Hello app</a>
+<script>const l=[...document.querySelectorAll('a')];l[0].focus();
+document.addEventListener('keydown',e=>{const i=l.indexOf(document.activeElement);
+if(e.key==='ArrowDown'||e.key==='ArrowRight'){e.preventDefault();l[(i+1)%l.length].focus()}
+else if(e.key==='ArrowUp'||e.key==='ArrowLeft'){e.preventDefault();l[(i-1+l.length)%l.length].focus()}
+else if(e.key==='Enter'){e.preventDefault();document.activeElement.click()}});</script></body></html>
