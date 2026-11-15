@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CA</title>
+<meta name="mrbd-web-app-capable" content="yes">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<meta name="referrer" content="no-referrer">
+<style>
+  /* Glasses display: 600x600, black = see-through, bright text. No touch-action on body
+     (it would switch the Neural Band to drag mode). */
+  :root { --fg:#f2f2f2; --dim:#9aa4ad; --cyan:#5fe3ff; --green:#6dff9e; --amber:#ffcc4d; --red:#ff6b6b; }
+  html, body { margin:0; background:#000; color:var(--fg); font-family:system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { width:600px; height:600px; overflow:hidden; padding:18px 22px; box-sizing:border-box;
+         display:flex; flex-direction:column; gap:12px; }
+  [hidden] { display:none !important; }
+  header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  h1 { margin:0; font-size:28px; color:var(--cyan); }
+  #status { font-size:20px; color:var(--cyan); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #status.busy, #status.ask { color:var(--amber); }
+  #status.off { color:var(--dim); }
+  #task { color:var(--dim); font-size:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:22px; margin-top:-6px; }
+  button, input {
+    font:inherit; font-size:22px; color:var(--fg); background:#0b0b0b; border:3px solid #3b4650; border-radius:14px;
+    padding:12px 14px; box-sizing:border-box;
+  }
+  button { cursor:pointer; font-weight:600; }
+  button:focus, input:focus { outline:none; border-color:var(--cyan); box-shadow:0 0 20px rgba(95,227,255,.45); background:#062029; }
+  input { width:100%; font-size:24px; padding:16px; }
+  input::placeholder { color:#8fa3b0; }
+  .row { display:flex; gap:10px; }
+  .row button { flex:1; font-size:20px; padding:12px 8px; }
+  .red { color:var(--red); border-color:#7a2d2d; }
+  .red:focus { border-color:var(--red); box-shadow:0 0 20px rgba(255,107,107,.45); background:#2a0b0b; }
+  .green { color:var(--green); }
+  #log { flex:1; min-height:0; overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
+         font:17px/1.3 ui-monospace, Consolas, monospace; color:var(--dim); }
+  #log div { white-space:pre-wrap; word-break:break-word; }
+  #log div:last-child { color:var(--fg); }
+  #ask { border:3px solid var(--amber); border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:12px; }
+  #ask h2 { margin:0; font-size:22px; color:var(--amber); }
+  #askText { font:18px/1.3 ui-monospace, Consolas, monospace; max-height:200px; overflow:hidden; white-space:pre-wrap; word-break:break-word; }
+  .big { font-size:24px; color:var(--fg); line-height:1.35; margin:18px 0 6px; }
+  .small { font-size:18px; color:var(--dim); line-height:1.35; }
+  #shot { width:556px; height:313px; object-fit:contain; border:2px solid #222; border-radius:10px; background:#000; display:block; }
+  #viewLog { font:17px/1.3 ui-monospace, Consolas, monospace; color:var(--fg); min-height:44px; max-height:68px; overflow:hidden; white-space:pre-wrap; }
+  #presetList { display:flex; flex-direction:column; gap:10px; }
+  #presetList button { text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #note { font-size:18px; color:var(--amber); min-height:24px; }
+</style>
+</head>
+<body>
+  <header><h1>CA</h1><span id="status">Connecting...</span></header>
+  <div id="task"></div>
+
+  <!-- CA off / starting / loading -->
+  <section id="offBox" hidden>
+    <div class="big" id="offText">CA is off on your PC.</div>
+    <div class="small" id="offSub">Starting it loads the AI model, which takes about a minute.</div>
+    <div class="row" style="margin-top:22px"><button id="startBtn" data-focusable class="green">Start CA</button></div>
+  </section>
+
+  <!-- CA asks to do something -->
+  <section id="ask" hidden>
+    <h2 id="askHead">CA wants to do this</h2>
+    <div id="askText"></div>
+    <div class="row">
+      <button id="deny" data-focusable>Deny</button>
+      <button id="allow" data-focusable class="green">Allow</button>
+    </div>
+  </section>
+
+  <!-- ready: talk to CA -->
+  <section id="idleBox" hidden>
+    <input id="text" data-focusable type="text" autocomplete="off" enterkeyhint="send"
+           placeholder="Pinch here, then just talk" aria-label="Tell CA what to do">
+    <div class="row" style="margin-top:12px">
+      <button id="presetsBtn" data-focusable>Presets</button>
+      <button id="viewBtn1" data-focusable>See screen</button>
+      <button id="offBtn" data-focusable class="red">Turn off</button>
+    </div>
+  </section>
+
+  <!-- working -->
+  <section id="busyBox" hidden>
+    <div class="row">
+      <button id="stopBtn" data-focusable class="red">Stop CA</button>
+      <button id="viewBtn2" data-focusable>See screen</button>
+    </div>
+  </section>
+
+  <!-- screen view (own history entry) -->
+  <section id="viewBox" hidden>
+    <img id="shot" alt="CA's screen">
+    <div id="viewLog"></div>
+    <div class="row">
+      <button id="stopBtn2" data-focusable class="red">Stop CA</button>
+      <button id="backBtn" data-focusable>Back</button>
+    </div>
+  </section>
+
+  <!-- presets (own history entry) -->
+  <section id="presetBox" hidden>
+    <div id="presetList"></div>
+  </section>
+
+  <div id="note"></div>
+  <div id="log"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+
+  // Where CA is. Two ways to open this page:
+  //  1. hosted (permanent address on GitHub Pages): .../ca/?ck=CA_KEY&hk=HOME_KEY -> finds CA's tunnel by itself
+  //  2. served by CA itself at /<key>/ (local test or a tunnel address)
+  // The site is public: no secrets live in this file; keys come from the address and stay on the glasses.
+  const params = new URLSearchParams(location.search);
+  const direct = /^\/[^/]{20,}\/?$/.test(location.pathname) && !params.has('ck');
+  if (params.get('ck')) store.set('mrdg_ca_key', params.get('ck'));
+  if (params.get('hk')) store.set('mrdg_home_key', params.get('hk'));
+  const fixedCa = params.get('ca') || '';     // testing: fixed CA address
+  const fixedHome = params.get('home') || ''; // testing: fixed Home Claude address
+  if (!direct && [...params.keys()].length) { try { history.replaceState(history.state, '', location.pathname); } catch (e) {} }
+  const caKey = () => store.get('mrdg_ca_key') || '';
+  const homeKey = () => store.get('mrdg_home_key') || '';
+  let caBase = direct ? location.pathname.replace(/\/?$/, '/') : '';   // ".../<key>/" once known
+
+  const ADDR = (file) => [
+    'https://api.github.com/repos/BlaineT1/mrdg-glasses/contents/' + file + '?ref=home-address',
+    'https://raw.githubusercontent.com/BlaineT1/mrdg-glasses/home-address/' + file,
+  ];
+  async function lookup(file, fixed) {   // url, '' = off, null = unknown
+    if (fixed) return fixed;
+    for (const src of ADDR(file)) {
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+        const r = await fetch(src + (src.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store', signal: ctl.signal });
+        clearTimeout(t);
+        if (!r.ok) continue;
+        const d = await r.json();
+        const j = d.content ? JSON.parse(atob(d.content.replace(/\n/g, ''))) : d;
+        if (typeof j.url === 'string') return j.url;
+      } catch (e) {}
+    }
+    return null;
+  }
+  async function findCa() {
+    if (direct) return true;
+    const u = await lookup('ca.json', fixedCa);
+    if (u) { caBase = u.replace(/\/$/, '') + '/' + caKey() + '/'; return true; }
+    caBase = '';
+    return u;   // '' off, null unknown
+  }
+
+  async function api(path, body) {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
+    try {
+      const r = await fetch(caBase + path, body === undefined ? { cache: 'no-store', signal: ctl.signal } : {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl.signal,
+      });
+      if (!r.ok) throw new Error('CA answered ' + r.status);
+      return await r.json();
+    } finally { clearTimeout(t); }
+  }
+
+  // Home Claude starts CA on the PC.
+  async function homeRemote(action) {
+    if (!homeKey()) throw new Error('This address has no Home Claude key. Start CA on the PC (glasses.bat).');
+    const url = await lookup('home.json', fixedHome);
+    if (url === '') throw new Error('Home Claude is off on the PC, so CA can’t be started from here.');
+    if (!url) throw new Error('Could not find the PC. Is it on?');
+    const r = await fetch(url.replace(/\/$/, '') + '/remote', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + homeKey() },
+      body: JSON.stringify({ action }),
+    });
+    let d = {}; try { d = await r.json(); } catch (e) {}
+    if (r.status === 404) throw new Error('Home Claude needs a restart on the PC to start CA.');
+    if (!r.ok || !d.ok) throw new Error(d.error || ('The PC said ' + r.status));
+    return d;
+  }
+
+  // ---- state
+  let conn = 'finding';   // finding | on | off | starting | lost
+  let s = null;           // last state from CA
+  let since = 0, approvalId = null, fails = 0, startedAt = 0, noteTimer = 0;
+  function note(t, ms) {
+    $('note').textContent = t || '';
+    clearTimeout(noteTimer);
+    if (t) noteTimer = setTimeout(() => { $('note').textContent = ''; }, ms || 5000);
+  }
+
+  // ---- screens: main changes with CA's state; view and presets get their own history entry
+  let screen = 'main';
+  function go(name) {
+    try { history.pushState({ ca: name }, ''); } catch (e) {}
+    screen = name; render(); focusDefault(true);
+    if (name === 'view') nextShot();
+    if (name === 'presets') loadPresets();
+  }
+  window.addEventListener('popstate', (e) => {
+    const n = e.state && e.state.ca;
+    screen = n === 'view' || n === 'presets' ? n : 'main';
+    render(); focusDefault(true);
+    if (screen === 'view') nextShot();
+  });
+
+  let lastMode = '';
+  function mode() {
+    if (conn === 'starting') return 'starting';
+    if (conn !== 'on' || !s) return conn === 'finding' ? 'finding' : 'off';
+    if (s.approval) return 'ask';
+    if (screen === 'view') return 'view';
+    if (!s.ready) return 'loading';
+    if (screen === 'presets' && !s.busy) return 'presets';
+    return s.busy ? 'busy' : 'idle';
+  }
+  function render() {
+    const m = mode();
+    const st = $('status');
+    st.textContent = {
+      finding: 'Finding CA...', off: conn === 'lost' ? 'Not answering' : 'Off', starting: 'Starting...',
+      loading: 'Getting ready', ask: 'Waiting for you', view: s && s.busy ? (s.status || 'Working') : 'Ready',
+      presets: 'Presets', busy: (s && s.status) || 'Working', idle: 'Ready',
+    }[m];
+    st.className = m === 'ask' ? 'ask' : ['busy', 'loading', 'starting'].includes(m) || (m === 'view' && s && s.busy) ? 'busy'
+      : (m === 'off' || m === 'finding') ? 'off' : '';
+    $('task').textContent = s && s.task && conn === 'on' ? '▶ ' + s.task : '';
+
+    $('offBox').hidden = !['off', 'starting', 'loading'].includes(m);
+    $('startBtn').hidden = m !== 'off';
+    if (m === 'off') {
+      $('offText').textContent = conn === 'lost' ? 'CA isn’t answering.' : 'CA is off on your PC.';
+      $('offSub').textContent = conn === 'lost' ? 'It may have been closed, or the PC may be asleep.'
+        : 'Starting it loads the AI model, which takes about a minute.';
+    } else if (m === 'starting') {
+      $('offText').textContent = 'Starting CA on your PC...';
+      $('offSub').textContent = 'Loading the AI model. This page connects by itself.';
+    } else if (m === 'loading') {
+      $('offText').textContent = 'CA is getting ready...';
+      $('offSub').textContent = (s && s.status) || '';
+    }
+    $('ask').hidden = m !== 'ask';
+    $('idleBox').hidden = m !== 'idle';
+    $('busyBox').hidden = m !== 'busy';
+    $('viewBox').hidden = m !== 'view';
+    $('stopBtn2').hidden = !(s && s.busy);
+    $('presetBox').hidden = m !== 'presets';
+    $('log').hidden = ['view', 'presets', 'off', 'starting', 'finding'].includes(m);
+    if (m !== lastMode) { lastMode = m; focusDefault(false); }
+  }
+
+  function addLines(lines) {
+    for (const l of lines) {
+      const d = document.createElement('div');
+      d.textContent = l.text;
+      $('log').appendChild(d);
+      since = l.id;
+    }
+    while ($('log').children.length > 30) $('log').firstChild.remove();
+    $('viewLog').textContent = [...$('log').children].slice(-3).map((d) => d.textContent).join('\n');
+  }
+
+  function showApproval(a) {
+    if (a && a.id !== approvalId) {
+      const m = a.prompt.match(/^Allow ([\s\S]*?)\?\s+\(([\s\S]*)\)\s*$/);
+      $('askHead').textContent = m ? 'CA wants to do this' : 'CA is asking';
+      $('askText').textContent = m ? m[1] + '\n(' + m[2] + ')' : a.prompt;
+    }
+    approvalId = a ? a.id : null;
+  }
+
+  // ---- polling CA
+  let timer = 0;
+  async function poll() {
+    clearTimeout(timer);
+    try {
+      if (!caBase) {
+        const f = await findCa();
+        if (f !== true) {
+          if (conn === 'starting') {
+            if (Date.now() - startedAt > 4 * 60 * 1000) { conn = 'off'; note('CA didn’t start. Check the PC.', 9000); }
+          } else conn = (f === '' || !caKey()) ? 'off' : 'lost';
+          render();
+          return;
+        }
+      }
+      const st = await api('api/state?since=' + since);
+      fails = 0;
+      if (conn !== 'on') { conn = 'on'; since = 0; $('log').innerHTML = ''; approvalId = null; }
+      s = st;
+      addLines(st.lines || []);
+      showApproval(st.approval);
+      render();
+      if (screen === 'view') nextShot();
+    } catch (e) {
+      if (++fails >= 3 && conn !== 'starting') {
+        fails = 0;
+        if (!direct) caBase = '';
+        conn = 'lost'; s = null;
+        render();
+      } else if (conn === 'starting' && !direct) caBase = '';  // the address may not route yet
+    } finally {
+      // While CA is off, look rarely: GitHub allows about 60 address lookups an hour.
+      const ms = conn === 'on' ? (document.hidden ? 6000 : 1500) : conn === 'starting' ? 4000 : 30000;
+      timer = setTimeout(poll, ms);
+    }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+
+  // ---- talking to CA: the glasses' text box (dictation) fills the input; it sends as soon as you're done
+  let lastSent = '', lastSentAt = 0;
+  async function send(text) {
+    text = (text || '').trim();
+    if (!text) return;
+    if (text === lastSent && Date.now() - lastSentAt < 3000) return;   // composer can fire twice
+    lastSent = text; lastSentAt = Date.now();
+    try {
+      const r = await api('api/task', { text });
+      if (r.result === 'ok') { $('text').value = ''; note(''); poll(); }
+      else note(r.result);
+    } catch (e) { note('Couldn’t reach CA'); }
+  }
+  $('text').addEventListener('change', () => send($('text').value));
+  $('text').addEventListener('keydown', (e) => {
+    // Never block Enter on an empty box: on the glasses that is what opens the text box.
+    if (e.key === 'Enter' && $('text').value.trim()) { e.preventDefault(); send($('text').value); }
+  });
+
+  async function stopTask() {
+    try { await api('api/stop', {}); note('Stopping...'); poll(); } catch (e) { note('Couldn’t reach CA'); }
+  }
+  $('stopBtn').addEventListener('click', stopTask);
+  $('stopBtn2').addEventListener('click', stopTask);
+  $('viewBtn1').addEventListener('click', () => go('view'));
+  $('viewBtn2').addEventListener('click', () => go('view'));
+  $('presetsBtn').addEventListener('click', () => go('presets'));
+  $('backBtn').addEventListener('click', () => history.back());
+  const reply = async (allow) => {
+    if (!approvalId) return;
+    try { const r = await api('api/answer', { id: approvalId, allow }); if (r.result !== 'ok') note(r.result); poll(); }
+    catch (e) { note('Couldn’t reach CA'); }
+  };
+  $('allow').addEventListener('click', () => reply(true));
+  $('deny').addEventListener('click', () => reply(false));
+
+  $('offBtn').addEventListener('click', async () => {
+    try { await api('api/quit', {}); } catch (e) {}
+    note('CA is turning off.', 4000);
+    if (!direct) caBase = '';
+    conn = 'off'; s = null; render();
+  });
+  $('startBtn').addEventListener('click', async () => {
+    note('Asking the PC to start CA...', 9000);
+    try {
+      const d = await homeRemote('ca_start');
+      conn = 'starting'; startedAt = Date.now(); caBase = '';
+      note(d.note || '', 6000);
+      render(); poll();
+    } catch (e) { note(e.message, 9000); }
+  });
+
+  // ---- presets
+  async function loadPresets() {
+    const list = $('presetList');
+    try {
+      const r = await api('api/presets');
+      list.innerHTML = '';
+      for (const p of (r.presets || []).slice(0, 6)) {
+        const b = document.createElement('button');
+        b.textContent = p; b.setAttribute('data-focusable', '');
+        b.addEventListener('click', () => { history.back(); send(p); });
+        list.appendChild(b);
+      }
+      if (!list.children.length) list.innerHTML = '<div class="small">No presets yet. Add some to glasses_presets.txt on the PC.</div>';
+      focusDefault(true);
+    } catch (e) { list.innerHTML = '<div class="small">Couldn’t load the presets.</div>'; }
+  }
+
+  // ---- screen view: one picture after another, only while it is open
+  let shotBusy = false;
+  function nextShot() {
+    if (screen !== 'view' || shotBusy || document.hidden || !caBase || conn !== 'on') return;
+    shotBusy = true;
+    const img = new Image();
+    const done = () => { shotBusy = false; setTimeout(nextShot, 1200); };
+    img.onload = () => { $('shot').src = img.src; done(); };
+    img.onerror = done;
+    img.src = caBase + 'api/screen?t=' + Date.now();
+  }
+
+  // ---- focus + keys (Neural Band / touchpad send arrows + Enter; Back calls history.back())
+  const items = () => [...document.querySelectorAll('[data-focusable]')].filter((el) => el.offsetParent !== null);
+  function focusDefault(force) {
+    const m = mode();
+    if (!force && m !== 'ask' && items().includes(document.activeElement)) return;
+    const pick = { ask: $('deny'), idle: $('text'), busy: $('stopBtn'), off: $('startBtn'), view: s && s.busy ? $('stopBtn2') : $('backBtn') }[m];
+    const el = pick && pick.offsetParent !== null ? pick : items()[0];
+    if (el) el.focus();
+  }
+  function move(dx, dy) {
+    const list = items(), cur = document.activeElement;
+    if (!list.includes(cur)) return focusDefault(true);
+    const r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let best = null, score = Infinity;
+    for (const el of list) {
+      if (el === cur) continue;
+      const b = el.getBoundingClientRect(), x = b.left + b.width / 2 - cx, y = b.top + b.height / 2 - cy;
+      const along = dx ? x * dx : y * dy;
+      if (along <= 4) continue;
+      const sc = along + 3 * (dx ? Math.abs(y) : Math.abs(x));
+      if (sc < score) { score = sc; best = el; }
+    }
+    if (!best) { const i = list.indexOf(cur); best = list[(i + (dx || dy) + list.length) % list.length]; }
+    best.focus();
+  }
+  document.addEventListener('keydown', (e) => {
+    const k = e.key, inInput = document.activeElement === $('text');
+    if (k === 'ArrowRight') { e.preventDefault(); move(1, 0); }
+    else if (k === 'ArrowLeft') { e.preventDefault(); move(-1, 0); }
+    else if (k === 'ArrowDown') { e.preventDefault(); move(0, 1); }
+    else if (k === 'ArrowUp') { e.preventDefault(); move(0, -1); }
+    else if (k === 'Enter' && !inInput) {
+      e.preventDefault();
+      if (e.repeat) return;
+      if (!items().includes(document.activeElement)) return focusDefault(true);
+      document.activeElement.click();
+    }
+    else if (k === 'Escape' || (k === 'Backspace' && !inInput)) { e.preventDefault(); if (screen !== 'main') history.back(); }
+  });
+
+  // ---- start
+  if (!direct && !caKey()) { conn = 'off'; note('Open CA with the address from glasses-url.txt in the CA folder.', 20000); }
+  const st0 = history.state && history.state.ca;
+  if (st0 === 'view' || st0 === 'presets') screen = st0;
+  render();
+  poll();
+})();
+</script>
+</body>
+</html>

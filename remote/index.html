@@ -22,7 +22,9 @@
   button .sub { display: block; font-size: 18px; color: #9ab; margin-top: 4px; }
   button.danger:focus { border-color: #ff6a4d; background: #2b0d06; box-shadow: 0 0 22px rgba(255,106,77,.45); }
   .list { display: flex; flex-direction: column; gap: 14px; }
-  .list button { padding: 18px 20px; font-size: 27px; }
+  .list { gap: 11px; }
+  .list button { padding: 12px 20px; font-size: 26px; }
+  .list button .sub { font-size: 17px; margin-top: 2px; }
   .grid { display: grid; gap: 12px; }
   .g3 { grid-template-columns: repeat(3, 1fr); }
   .g2 { grid-template-columns: repeat(2, 1fr); }
@@ -54,6 +56,7 @@
     <button data-focusable data-go="media">Media &amp; volume<span class="sub" id="homeVol">&nbsp;</span></button>
     <button data-focusable data-go="power">Lock &amp; power<span class="sub" id="homePower">Lock, screen off, sleep, restart</span></button>
     <button data-focusable data-go="nest">Nest<span class="sub" id="homeNest">&nbsp;</span></button>
+    <button data-focusable data-go="ca">CA (computer agent)<span class="sub" id="homeCa">&nbsp;</span></button>
   </section>
 
   <section id="s-media" hidden>
@@ -89,6 +92,14 @@
     <div class="grid g2">
       <button data-focusable data-act="nest_start"><span class="lb">Start Nest</span></button>
       <button data-focusable data-act="nest_stop"><span class="lb">Stop Nest</span></button>
+    </div>
+  </section>
+
+  <section id="s-ca" hidden>
+    <div class="rows"><div>CA for glasses <span class="dot" id="caDot">?</span></div></div>
+    <div class="grid g2">
+      <button data-focusable data-act="ca_start"><span class="lb">Start CA</span></button>
+      <button data-focusable data-act="ca_stop"><span class="lb">Stop CA</span></button>
     </div>
   </section>
 
@@ -216,6 +227,10 @@
     const n = s.nest || {};
     const dot = (id, up) => { $(id).textContent = up ? 'running' : 'stopped'; $(id).className = 'dot ' + (up ? 'up' : 'down'); };
     dot('nDb', n.database); dot('nApi', n.api); dot('nWeb', n.web);
+    const ca = s.ca || 'off';
+    $('caDot').textContent = ca === 'on' ? 'running' : ca === 'starting' ? 'starting...' : 'stopped';
+    $('caDot').className = 'dot ' + (ca === 'on' ? 'up' : 'down');
+    $('homeCa').textContent = ca === 'on' ? 'Running' : ca === 'starting' ? 'Starting...' : 'Stopped';
     const allUp = n.database && n.api && n.web;
     $('homeNest').textContent = n.phase === 'starting' || n.phase === 'stopping' ? n.message
       : allUp ? 'Running' : (n.database || n.api || n.web) ? 'Partly running' : 'Stopped';
@@ -241,7 +256,7 @@
   let pollTimer = null;
   function schedulePoll() {
     clearTimeout(pollTimer);
-    const ms = screen === 'nest' ? 2500 : (last && last.power) ? 1000 : 5000;
+    const ms = (screen === 'nest' || screen === 'ca') ? 2500 : (last && last.power) ? 1000 : 5000;
     pollTimer = setTimeout(async () => { await refresh(); schedulePoll(); }, ms);
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); schedulePoll(); } });
@@ -255,6 +270,7 @@
     shutdown: 'Shutting down in 30 s. Cancel is on this screen.',
     nest_start: 'Starting Nest (Docker can take a minute)...',
     nest_stop: 'Stopping Nest...',
+    ca_start: 'Starting CA (about a minute)...', ca_stop: 'CA is off.',
     media_play: 'Play / pause', media_next: 'Next track', media_prev: 'Previous track',
   };
   let sending = 0;
@@ -292,12 +308,13 @@
   });
 
   // ---- screens (inner screens get a history entry so the Back gesture returns here)
-  const TITLES = { home: 'PC Remote', media: 'Media', power: 'Lock & power', nest: 'Nest', confirm: 'Are you sure?' };
+  const TITLES = { home: 'PC Remote', media: 'Media', power: 'Lock & power', nest: 'Nest', ca: 'CA', confirm: 'Are you sure?' };
   const HINTS = {
     home: 'Swipe to choose, pinch to open.',
     media: 'Swipe to move, pinch to press. Back to return.',
     power: 'Sleep, restart and shut down ask first.',
     nest: 'Database, API (port 4000) and web (5173).',
+    ca: 'Talk to CA in the CA app on your glasses.',
     confirm: '',
   };
   let screen = 'home';
